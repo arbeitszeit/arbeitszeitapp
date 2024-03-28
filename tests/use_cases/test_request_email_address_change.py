@@ -86,7 +86,7 @@ class RequestEmailAddressChangeTests(BaseTestCase):
             ("@b",),
         ]
     )
-    def test_that_email_addresses_that_are_definityly_not_valid_are_rejected_as_new_addresses(
+    def test_that_email_addresses_that_are_definitly_not_valid_are_rejected_as_new_addresses(
         self, invalid: str
     ) -> None:
         original_email_address = "test@test.test"
@@ -98,7 +98,13 @@ class RequestEmailAddressChangeTests(BaseTestCase):
         response = self.use_case.request_email_address_change(request)
         assert response.is_rejected
 
-    def test_that_change_confirmation_was_presented_after_successful_request_of_member(
+
+class RequestEmailAddressChangeNotificationTests(BaseTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.use_case = self.injector.get(use_case.RequestEmailAddressChangeUseCase)
+
+    def test_that_two_mails_are_sent_after_successful_request_of_member(
         self,
     ) -> None:
         original_address = "test@test.test"
@@ -109,7 +115,53 @@ class RequestEmailAddressChangeTests(BaseTestCase):
             new_email_address=new_address,
         )
         self.use_case.request_email_address_change(request)
-        assert self.delivered_notifications()
+        assert len(self.delivered_notifications()) == 2
+
+    def test_that_at_first_the_warning_mail_gets_sent_after_successful_request_of_member(
+        self,
+    ) -> None:
+        original_address = "test@test.test"
+        new_address = "new@test.test"
+        self.member_generator.create_member(email=original_address)
+        request = use_case.Request(
+            current_email_address=original_address,
+            new_email_address=new_address,
+        )
+        self.use_case.request_email_address_change(request)
+        assert isinstance(
+            self.delivered_notifications()[0], email_notifications.EmailChangeWarning
+        )
+
+    def test_that_the_warning_mail_contains_original_address_as_requested(
+        self,
+    ) -> None:
+        original_address = "test@test.test"
+        new_address = "new@test.test"
+        self.member_generator.create_member(email=original_address)
+        request = use_case.Request(
+            current_email_address=original_address,
+            new_email_address=new_address,
+        )
+        self.use_case.request_email_address_change(request)
+        notification = self.delivered_notifications()[0]
+        assert isinstance(notification, email_notifications.EmailChangeWarning)
+        assert notification.old_email_address == original_address
+
+    def test_that_secondly_the_change_confirmation_mail_gets_sent_after_successful_request_of_member(
+        self,
+    ) -> None:
+        original_address = "test@test.test"
+        new_address = "new@test.test"
+        self.member_generator.create_member(email=original_address)
+        request = use_case.Request(
+            current_email_address=original_address,
+            new_email_address=new_address,
+        )
+        self.use_case.request_email_address_change(request)
+        assert isinstance(
+            self.delivered_notifications()[1],
+            email_notifications.EmailChangeConfirmation,
+        )
 
     @parameterized.expand(
         [
@@ -117,7 +169,7 @@ class RequestEmailAddressChangeTests(BaseTestCase):
             ("other@test.test",),
         ]
     )
-    def test_that_delivered_notification_contains_current_email_address_as_requested(
+    def test_that_change_confirmation_mail_contains_current_email_address_as_requested(
         self, original_address: str
     ) -> None:
         self.member_generator.create_member(email=original_address)
@@ -127,7 +179,11 @@ class RequestEmailAddressChangeTests(BaseTestCase):
             new_email_address=new_address,
         )
         self.use_case.request_email_address_change(request)
-        notification = self.get_latest_notification_delivered()
+        notification = self.delivered_notifications()[1]
+        assert isinstance(
+            notification,
+            email_notifications.EmailChangeConfirmation,
+        )
         assert notification.old_email_address == original_address
 
     @parameterized.expand(
@@ -136,7 +192,7 @@ class RequestEmailAddressChangeTests(BaseTestCase):
             ("other@test.test",),
         ]
     )
-    def test_that_delivered_notification_contains_new_email_address_as_requested(
+    def test_that_change_confirmation_mail_contains_new_email_address_as_requested(
         self, new_address: str
     ) -> None:
         original_address = "origional@test.test"
@@ -146,10 +202,11 @@ class RequestEmailAddressChangeTests(BaseTestCase):
             new_email_address=new_address,
         )
         self.use_case.request_email_address_change(request)
-        notification = self.get_latest_notification_delivered()
+        notification = self.delivered_notifications()[1]
+        assert isinstance(notification, email_notifications.EmailChangeConfirmation)
         assert notification.new_email_address == new_address
 
-    def test_that_no_notifiation_is_delivered_if_email_address_is_unkown(self) -> None:
+    def test_that_no_notification_is_delivered_if_email_address_is_unkown(self) -> None:
         request = use_case.Request(
             current_email_address="test@test.test",
             new_email_address="new@test.test",
@@ -157,18 +214,15 @@ class RequestEmailAddressChangeTests(BaseTestCase):
         self.use_case.request_email_address_change(request)
         assert not self.delivered_notifications()
 
-    def get_latest_notification_delivered(
-        self,
-    ) -> email_notifications.EmailChangeConfirmation:
-        notifications = self.delivered_notifications()
-        assert notifications
-        return notifications[-1]
-
     def delivered_notifications(
         self,
-    ) -> list[email_notifications.EmailChangeConfirmation]:
+    ) -> list[
+        email_notifications.EmailChangeConfirmation
+        | email_notifications.EmailChangeWarning
+    ]:
         return [
             m
             for m in self.email_sender.get_messages_sent()
             if isinstance(m, email_notifications.EmailChangeConfirmation)
+            or isinstance(m, email_notifications.EmailChangeWarning)
         ]
